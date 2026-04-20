@@ -1,0 +1,330 @@
+<div class="page-shell">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Сервис аренды помещений</p>
+      <h1>{{ title }}</h1>
+    </div>
+    <div class="session-badge">
+      @if (user) {
+        <div>
+          <strong>{{ user.legalName }}</strong>
+          <span>{{ user.email }}</span>
+        </div>
+        <button type="button" class="ghost-button" (click)="logout()">Выйти</button>
+      } @else {
+        <span>Гость</span>
+      }
+    </div>
+  </header>
+
+  <section class="hero-grid">
+    <article class="hero-card pitch-card">
+      <p class="hero-label">Просто и спокойно</p>
+      <h2 class="poster-title">
+        <span class="poster-line poster-line-lead">Не торопитесь.</span>
+        <span class="poster-line poster-line-main">Выберите время,</span>
+        <span class="poster-line poster-line-sub">а остальное мы, без суеты и не спеша, сделаем сами.</span>
+      </h2>
+      <p class="hero-copy">
+        Бронирование, расчёт суммы и создание платежа в одном месте.
+      </p>
+    </article>
+
+    <article class="hero-card auth-card">
+      <div class="auth-switch">
+        <button type="button" [class.active]="authMode === 'login'" (click)="switchAuthMode('login')">Вход</button>
+        <button type="button" [class.active]="authMode === 'register'" (click)="switchAuthMode('register')">Регистрация</button>
+      </div>
+
+      @if (!user) {
+        @if (authMode === 'login') {
+          <form class="form-grid" (ngSubmit)="login()">
+            <label>
+              <span>Email</span>
+              <input type="email" name="loginEmail" [(ngModel)]="loginForm.email" required />
+            </label>
+            <label>
+              <span>Пароль</span>
+              <input type="password" name="loginPassword" [(ngModel)]="loginForm.password" required />
+            </label>
+            <button type="submit" class="primary-button" [disabled]="authLoading">
+              {{ authLoading ? 'Входим...' : 'Войти' }}
+            </button>
+          </form>
+        } @else {
+          <form class="form-grid" (ngSubmit)="register()">
+            <label>
+              <span>Email</span>
+              <input type="email" name="registerEmail" [(ngModel)]="registerForm.email" required />
+            </label>
+            <label>
+              <span>Юридическое имя</span>
+              <input type="text" name="registerLegalName" [(ngModel)]="registerForm.legalName" required />
+            </label>
+            <label>
+              <span>Телефон</span>
+              <input type="tel" name="registerPhone" [(ngModel)]="registerForm.phone" />
+            </label>
+            <label>
+              <span>Пароль</span>
+              <input type="password" name="registerPassword" [(ngModel)]="registerForm.password" required minlength="6" />
+            </label>
+            <button type="submit" class="primary-button" [disabled]="authLoading">
+              {{ authLoading ? 'Создаём...' : 'Создать аккаунт' }}
+            </button>
+          </form>
+        }
+      } @else {
+        <div class="account-panel">
+          <p>Профиль активен. Ждём ваших бронирований!</p>
+          <div class="account-meta">
+            <span>ID пользователя: {{ user.userId }}</span>
+            <span>Роль: {{ displayRole(user.role) }}</span>
+          </div>
+        </div>
+      }
+    </article>
+  </section>
+
+  @if (pageError) {
+    <div #errorBanner class="message error-message" tabindex="-1">{{ pageError }}</div>
+  }
+
+  @if (pageNotice) {
+    <div class="message notice-message">{{ pageNotice }}</div>
+  }
+
+  <section class="content-grid">
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-tag">Каталог</p>
+          <h3>Помещения</h3>
+        </div>
+        @if (catalogLoading) {
+          <span class="muted">Загружаем...</span>
+        }
+      </div>
+
+      <div class="cards-grid">
+        @for (location of locations; track trackById($index, location)) {
+          <article
+            class="catalog-card location-card"
+            [class.selected]="bookingForm.locationId === location.locationId"
+          >
+            <button
+              type="button"
+              class="catalog-card-button"
+              (click)="chooseLocation(location.locationId)"
+            >
+              <img class="location-image" [src]="locationImage(location)" [alt]="displayLocationName(location.name)" />
+              <span class="chip">{{ displayLocationType(location.type) }}</span>
+              <h4>{{ displayLocationName(location.name) }}</h4>
+              <p>{{ displayAddress(location.address) }}</p>
+              <div class="card-meta">
+                <span>{{ location.opening }} - {{ location.closing }}</span>
+                <span>{{ location.phone || 'Контакты уточняются' }}</span>
+              </div>
+            </button>
+            <div class="card-actions">
+              <a
+                class="map-link"
+                [href]="yandexMapsUrl(location)"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Открыть в Яндекс Картах
+              </a>
+            </div>
+          </article>
+        }
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-tag">Цены</p>
+          <h3>Тарифы</h3>
+        </div>
+      </div>
+
+      <div class="cards-grid tariff-grid">
+        @for (tariff of tariffs; track trackById($index, tariff)) {
+          <button
+            type="button"
+            class="catalog-card tariff-card"
+            [class.selected]="bookingForm.tariffId === tariff.tariffId"
+            [class.is-disabled]="!isTariffAvailable(tariff.status)"
+            [disabled]="!isTariffAvailable(tariff.status)"
+            (click)="chooseTariff(tariff.tariffId)"
+          >
+            <span class="chip">{{ displayTariffType(tariff.type) }}</span>
+            <h4>{{ displayTariffName(tariff.name) }}</h4>
+            <p class="tariff-price">{{ formatCurrency(tariff.basePrice) }} / час</p>
+            <div class="card-meta">
+              <span>Скидка: {{ tariff.discount }}%</span>
+              <span>Статус: {{ displayTariffStatus(tariff.status) }}</span>
+            </div>
+          </button>
+        }
+      </div>
+    </article>
+  </section>
+
+  <section class="booking-layout">
+    <article class="panel booking-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-tag">Заявка</p>
+          <h3>Создание бронирования</h3>
+        </div>
+      </div>
+
+      <form class="booking-form" (ngSubmit)="createBooking()">
+        <label>
+          <span>Помещение</span>
+          <select name="locationId" [(ngModel)]="bookingForm.locationId" [disabled]="!user" (ngModelChange)="onLocationChange()">
+            @for (location of locations; track trackById($index, location)) {
+              <option [ngValue]="location.locationId">{{ displayLocationName(location.name) }}</option>
+            }
+          </select>
+        </label>
+
+        <label>
+          <span>Тариф</span>
+          <select name="tariffId" [(ngModel)]="bookingForm.tariffId" [disabled]="!user">
+            @for (tariff of tariffs; track trackById($index, tariff)) {
+              <option [ngValue]="tariff.tariffId" [disabled]="!isTariffAvailable(tariff.status)">
+                {{ displayTariffName(tariff.name) }} @if (!isTariffAvailable(tariff.status)) { (недоступен) }
+              </option>
+            }
+          </select>
+        </label>
+
+        <label>
+          <span>Дата аренды</span>
+          <input type="date" name="bookingDate" [(ngModel)]="bookingForm.bookingDate" [min]="todayDate()" [disabled]="!user" (ngModelChange)="onBookingDateChange()" />
+        </label>
+
+        <label>
+          <span>Начало аренды</span>
+          <select name="startHour" [(ngModel)]="bookingForm.startHour" [disabled]="!user" (ngModelChange)="syncBookingHours()">
+            @for (hour of availableStartHours(); track hour) {
+              <option [ngValue]="hour">{{ hour }}</option>
+            }
+          </select>
+        </label>
+
+        <label>
+          <span>Окончание аренды</span>
+          <select name="endHour" [(ngModel)]="bookingForm.endHour" [disabled]="!user">
+            @for (hour of availableEndHours(); track hour) {
+              <option [ngValue]="hour">{{ hour }}</option>
+            }
+          </select>
+        </label>
+
+        <button type="submit" class="primary-button" [disabled]="bookingSubmitting || !user">
+          {{ bookingSubmitting ? 'Создаём заявку...' : 'Оформить заявку' }}
+        </button>
+      </form>
+
+      <div class="availability-note" [class.is-loading]="availabilityLoading">
+        {{ availabilityLoading ? 'Проверяем занятость выбранной даты...' : occupiedHoursText() }}
+      </div>
+
+      <div class="booking-preview">
+        <div>
+          <span class="preview-label">Выбрано помещение</span>
+          <strong>{{ selectedLocationName() }}</strong>
+        </div>
+        <div>
+          <span class="preview-label">Выбран тариф</span>
+          <strong>{{ selectedTariffName() }}</strong>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-tag">История</p>
+          <h3>Мои заявки</h3>
+        </div>
+        @if (bookingsLoading) {
+          <span class="muted">Обновляем...</span>
+        }
+      </div>
+
+      @if (!user) {
+        <p class="empty-state">Войдите, чтобы увидеть свои бронирования и созданные платежи.</p>
+      } @else if (bookings.length === 0) {
+        <p class="empty-state">Заявок пока нет. Выберите помещение и отправьте первую заявку.</p>
+      } @else {
+        <div class="timeline">
+          @for (booking of bookings; track trackById($index, booking)) {
+            <article class="timeline-card">
+              <div class="timeline-header">
+                <div>
+                  <h4>{{ displayLocationName(booking.locationName) }}</h4>
+                  <p>{{ displayAddress(booking.locationAddress) }}</p>
+                </div>
+                <span class="status-pill" [class]="statusClass(booking.bookingStatus)">{{ displayStatus(booking.bookingStatus) }}</span>
+              </div>
+
+              <div class="timeline-meta">
+                <span>{{ formatDateTime(booking.bookingStart) }} - {{ formatDateTime(booking.bookingEnd) }}</span>
+                <span>{{ booking.bookingDurationHours }} ч</span>
+                <span>{{ displayTariffName(booking.tariffName) }}</span>
+                <span>{{ formatCurrency(booking.bookingPrice) }}</span>
+              </div>
+
+              <div class="linked-payment">
+                <span>Платёж #{{ booking.payment.paymentId }}</span>
+                <span class="status-pill" [class]="statusClass(booking.payment.paymentStatus)">{{ displayStatus(booking.payment.paymentStatus) }}</span>
+                <span>Сумма: {{ formatCurrency(booking.payment.paymentSum) }}</span>
+                <span>Оплатить до: {{ booking.payment.paymentDueDate }}</span>
+              </div>
+            </article>
+          }
+        </div>
+      }
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="panel-tag">Платежи</p>
+        <h3>Мои выставленные счета</h3>
+      </div>
+    </div>
+
+    @if (!user) {
+      <p class="empty-state">После входа здесь появятся все платежи, связанные с вашими заявками.</p>
+    } @else if (payments.length === 0) {
+      <p class="empty-state">Платежи ещё не сформированы.</p>
+    } @else {
+      <div class="payment-table">
+        @for (payment of payments; track trackById($index, payment)) {
+          <div class="payment-row">
+            <div>
+              <strong>#{{ payment.paymentId }}</strong>
+              <span>{{ payment.locationName ? displayLocationName(payment.locationName) : 'Помещение не указано' }}</span>
+            </div>
+            <div>
+              <strong>{{ displayTariffName(payment.tariffName) }}</strong>
+              <span>Создан {{ formatDateTime(payment.paymentCreatedAt) }}</span>
+            </div>
+            <div>
+              <strong>{{ formatCurrency(payment.paymentSum) }}</strong>
+              <span>Срок: {{ payment.paymentDueDate }}</span>
+            </div>
+            <span class="status-pill" [class]="statusClass(payment.paymentStatus)">{{ displayStatus(payment.paymentStatus) }}</span>
+          </div>
+        }
+      </div>
+    }
+  </section>
+</div>
