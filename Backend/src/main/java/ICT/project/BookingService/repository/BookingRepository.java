@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface BookingRepository extends JpaRepository<BookingEntity, Long> {
 
+    List<BookingEntity> findAllByOrderByBookingStartDesc();
+
     @Query("""
             select case when count(b) > 0 then true else false end
             from BookingEntity b

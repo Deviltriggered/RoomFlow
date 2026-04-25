@@ -77,7 +77,7 @@ class BookingServiceTest {
         LocationEntity location = new LocationEntity();
         location.setLocationId(3L);
         location.setLocationName("Зал «Волга»");
-        location.setLocationAddress("Самара, ул. Молодогвардейская, 151");
+        location.setLocationAddress("Деловой центр, корпус A");
         location.setLocationOpening(LocalTime.of(8, 0));
         location.setLocationClosing(LocalTime.of(22, 0));
 

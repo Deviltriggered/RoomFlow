@@ -1,20 +1,20 @@
 package ICT.project.BookingService.service;
 
-import ICT.project.BookingService.dto.AuthResponse;
+import ICT.project.BookingService.dto.AuthSessionResponse;
 import ICT.project.BookingService.dto.LoginRequest;
 import ICT.project.BookingService.dto.RegisterRequest;
 import ICT.project.BookingService.entity.UserCredentialEntity;
 import ICT.project.BookingService.entity.UserEntity;
 import ICT.project.BookingService.repository.UserCredentialRepository;
 import ICT.project.BookingService.repository.UserRepository;
+import ICT.project.BookingService.security.AuthenticatedUser;
+import ICT.project.BookingService.security.JwtTokenService;
 import ICT.project.BookingService.support.ApiException;
-import jakarta.servlet.http.HttpSession;
 import java.time.LocalDateTime;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-
-import static ICT.project.BookingService.security.SessionAuthenticationFilter.AUTH_USER_ID;
 
 @Service
 public class AuthService {
@@ -22,18 +22,24 @@ public class AuthService {
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtTokenService jwtTokenService;
+    private final String adminEmail;
 
     public AuthService(
             UserRepository userRepository,
             UserCredentialRepository userCredentialRepository,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            JwtTokenService jwtTokenService,
+            @Value("${app.auth.admin-email:}") String adminEmail
     ) {
         this.userRepository = userRepository;
         this.userCredentialRepository = userCredentialRepository;
         this.passwordEncoder = passwordEncoder;
+        this.jwtTokenService = jwtTokenService;
+        this.adminEmail = normalizeOptionalEmail(adminEmail);
     }
 
-    public AuthResponse register(RegisterRequest request, HttpSession session) {
+    public AuthSessionResponse register(RegisterRequest request) {
         if (userRepository.existsByUserEmailIgnoreCase(request.email())) {
             throw new ApiException(HttpStatus.CONFLICT, "Пользователь с таким email уже существует.");
         }
@@ -42,7 +48,7 @@ public class AuthService {
         user.setUserEmail(normalizeEmail(request.email()));
         user.setUserLegalName(request.legalName().trim());
         user.setUserPhone(blankToNull(request.phone()));
-        user.setUserRole("CLIENT");
+        user.setUserRole(determineRoleForEmail(request.email()));
         user = userRepository.save(user);
 
         UserCredentialEntity credential = new UserCredentialEntity();
@@ -51,11 +57,10 @@ public class AuthService {
         credential.setCreatedAt(LocalDateTime.now());
         userCredentialRepository.save(credential);
 
-        session.setAttribute(AUTH_USER_ID, user.getUserId());
-        return toResponse(user);
+        return jwtTokenService.issueSession(user);
     }
 
-    public AuthResponse login(LoginRequest request, HttpSession session) {
+    public AuthSessionResponse login(LoginRequest request) {
         UserEntity user = userRepository.findByUserEmailIgnoreCase(normalizeEmail(request.email()))
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Неверный email или пароль."));
 
@@ -66,26 +71,22 @@ public class AuthService {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Неверный email или пароль.");
         }
 
-        session.setAttribute(AUTH_USER_ID, user.getUserId());
-        return toResponse(user);
+        return jwtTokenService.issueSession(user);
     }
 
-    public void logout(HttpSession session) {
-        session.invalidate();
-    }
-
-    public AuthResponse toResponse(UserEntity user) {
-        return new AuthResponse(
-                user.getUserId(),
-                user.getUserEmail(),
-                user.getUserLegalName(),
-                user.getUserPhone(),
-                user.getUserRole()
-        );
+    public AuthSessionResponse refresh(String refreshToken) {
+        AuthenticatedUser principal = jwtTokenService.parseRefreshToken(refreshToken);
+        UserEntity user = userRepository.findById(principal.userId())
+                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Пользователь не найден."));
+        return jwtTokenService.issueSession(user);
     }
 
     private String normalizeEmail(String email) {
         return email.trim().toLowerCase();
+    }
+
+    private String determineRoleForEmail(String email) {
+        return !adminEmail.isBlank() && adminEmail.equals(normalizeEmail(email)) ? "ADMIN" : "CLIENT";
     }
 
     private String blankToNull(String value) {
@@ -93,5 +94,9 @@ public class AuthService {
             return null;
         }
         return value.trim();
+    }
+
+    private String normalizeOptionalEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase();
     }
 }

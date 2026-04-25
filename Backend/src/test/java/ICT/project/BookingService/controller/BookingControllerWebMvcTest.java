@@ -3,33 +3,29 @@ package ICT.project.BookingService.controller;
 import ICT.project.BookingService.BookingServiceApplication;
 import ICT.project.BookingService.dto.BookingResponse;
 import ICT.project.BookingService.dto.PaymentResponse;
+import ICT.project.BookingService.entity.UserEntity;
 import ICT.project.BookingService.repository.BookingPaymentLinkRepository;
 import ICT.project.BookingService.repository.BookingRepository;
 import ICT.project.BookingService.repository.LocationRepository;
 import ICT.project.BookingService.repository.PaymentRepository;
 import ICT.project.BookingService.repository.TariffRepository;
 import ICT.project.BookingService.repository.UserCredentialRepository;
-import ICT.project.BookingService.entity.UserEntity;
 import ICT.project.BookingService.repository.UserRepository;
+import ICT.project.BookingService.security.JwtTokenService;
 import ICT.project.BookingService.service.BookingService;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-
-import static ICT.project.BookingService.security.SessionAuthenticationFilter.AUTH_USER_ID;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,7 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "spring.autoconfigure.exclude="
                         + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                         + "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration,"
-                        + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"
+                        + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+                "app.auth.jwt.secret=test-jwt-secret-booking-service-1234567890"
         }
 )
 @AutoConfigureMockMvc
@@ -52,6 +49,9 @@ class BookingControllerWebMvcTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JwtTokenService jwtTokenService;
 
     @MockitoBean
     private BookingService bookingService;
@@ -78,8 +78,7 @@ class BookingControllerWebMvcTest {
     private TariffRepository tariffRepository;
 
     @Test
-    void getMyBookingsReturnsBookingsForAuthenticatedSession() throws Exception {
-        MockHttpSession session = authenticatedSession(5L);
+    void getMyBookingsReturnsBookingsForAuthenticatedUser() throws Exception {
         PaymentResponse payment = new PaymentResponse(
                 21L,
                 new BigDecimal("2700.00"),
@@ -91,8 +90,8 @@ class BookingControllerWebMvcTest {
         BookingResponse booking = new BookingResponse(
                 11L,
                 3L,
-                "Зал «Волга»",
-                "Самара, ул. Молодогвардейская, 151",
+                "Зал «Орион»",
+                "Деловой центр, корпус A",
                 7L,
                 "Базовый",
                 LocalDateTime.of(2026, 4, 21, 10, 0),
@@ -104,19 +103,18 @@ class BookingControllerWebMvcTest {
         );
         when(bookingService.getUserBookings(5L)).thenReturn(List.of(booking));
 
-        mockMvc.perform(get("/api/bookings/my").session(session))
+        mockMvc.perform(get("/api/bookings/my")
+                        .header("Authorization", authorizationHeaderFor(5L, "CLIENT")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].bookingId").value(11))
-                .andExpect(jsonPath("$[0].locationName").value("Зал «Волга»"))
+                .andExpect(jsonPath("$[0].locationName").value("Зал «Орион»"))
                 .andExpect(jsonPath("$[0].payment.paymentId").value(21));
     }
 
     @Test
     void createBookingReturnsValidationErrorForEmptyBody() throws Exception {
-        MockHttpSession session = authenticatedSession(5L);
-
         mockMvc.perform(post("/api/bookings")
-                        .session(session)
+                        .header("Authorization", authorizationHeaderFor(5L, "CLIENT"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -126,17 +124,12 @@ class BookingControllerWebMvcTest {
         verify(bookingService, never()).createBooking(any(), any());
     }
 
-    private MockHttpSession authenticatedSession(Long userId) {
-        MockHttpSession session = new MockHttpSession();
-        session.setAttribute(AUTH_USER_ID, userId);
-
+    private String authorizationHeaderFor(Long userId, String role) {
         UserEntity user = new UserEntity();
         user.setUserId(userId);
         user.setUserEmail("client@example.com");
         user.setUserLegalName("ООО Ромашка");
-        user.setUserRole("CLIENT");
-
-        when(userRepository.findById(eq(userId))).thenReturn(Optional.of(user));
-        return session;
+        user.setUserRole(role);
+        return "Bearer " + jwtTokenService.issueSession(user).accessToken();
     }
 }

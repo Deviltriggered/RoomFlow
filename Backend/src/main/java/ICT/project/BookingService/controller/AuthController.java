@@ -1,11 +1,12 @@
 package ICT.project.BookingService.controller;
 
 import ICT.project.BookingService.dto.AuthResponse;
+import ICT.project.BookingService.dto.AuthSessionResponse;
 import ICT.project.BookingService.dto.LoginRequest;
+import ICT.project.BookingService.dto.RefreshTokenRequest;
 import ICT.project.BookingService.dto.RegisterRequest;
 import ICT.project.BookingService.security.AuthenticatedUser;
 import ICT.project.BookingService.service.AuthService;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,13 +28,18 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
-        return authService.register(request, session);
+    public AuthSessionResponse register(@Valid @RequestBody RegisterRequest request) {
+        return authService.register(request);
     }
 
     @PostMapping("/login")
-    public AuthResponse login(@Valid @RequestBody LoginRequest request, HttpSession session) {
-        return authService.login(request, session);
+    public AuthSessionResponse login(@Valid @RequestBody LoginRequest request) {
+        return authService.login(request);
+    }
+
+    @PostMapping("/refresh")
+    public AuthSessionResponse refresh(@Valid @RequestBody RefreshTokenRequest request) {
+        return authService.refresh(request.refreshToken());
     }
 
     @GetMapping("/me")
@@ -45,8 +51,7 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(HttpSession session) {
-        authService.logout(session);
+    public ResponseEntity<Void> logout() {
         return ResponseEntity.noContent().build();
     }
 }

@@ -7,7 +7,7 @@
     <parent>
         <groupId>ICT.project</groupId>
         <artifactId>roomflow-parent</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <name>RoomFlow Frontend</name>
-    <description>Angular frontend, упакованный как статические ресурсы для Spring Boot.</description>
+    <description>Angular frontend presented as static resources for backend.</description>
 
     <build>
         <plugins>

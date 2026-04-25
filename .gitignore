@@ -1,8 +1,14 @@
 HELP.md
+.env
+.env.*
+!.env.example
 target/
 node_modules/
 .angular/
+.npm-cache/
+Frontend/.npm-cache/
 .frontend-git-backup/
+scripts/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

@@ -1,8 +1,9 @@
 package ICT.project.BookingService.controller;
 
 import ICT.project.BookingService.BookingServiceApplication;
-import ICT.project.BookingService.dto.AuthResponse;
-import ICT.project.BookingService.dto.AuthSessionResponse;
+import ICT.project.BookingService.dto.AdminBookingResponse;
+import ICT.project.BookingService.dto.PaymentResponse;
+import ICT.project.BookingService.entity.UserEntity;
 import ICT.project.BookingService.repository.BookingPaymentLinkRepository;
 import ICT.project.BookingService.repository.BookingRepository;
 import ICT.project.BookingService.repository.LocationRepository;
@@ -10,7 +11,12 @@ import ICT.project.BookingService.repository.PaymentRepository;
 import ICT.project.BookingService.repository.TariffRepository;
 import ICT.project.BookingService.repository.UserCredentialRepository;
 import ICT.project.BookingService.repository.UserRepository;
-import ICT.project.BookingService.service.AuthService;
+import ICT.project.BookingService.security.JwtTokenService;
+import ICT.project.BookingService.service.AdminService;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,12 +25,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.Instant;
-
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -39,13 +42,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         }
 )
 @AutoConfigureMockMvc
-class AuthControllerWebMvcTest {
+class AdminControllerWebMvcTest {
 
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private JwtTokenService jwtTokenService;
+
     @MockitoBean
-    private AuthService authService;
+    private AdminService adminService;
 
     @MockitoBean
     private UserRepository userRepository;
@@ -69,54 +75,60 @@ class AuthControllerWebMvcTest {
     private TariffRepository tariffRepository;
 
     @Test
-    void registerReturnsCreatedProfile() throws Exception {
-        AuthSessionResponse response = new AuthSessionResponse(
-                new AuthResponse(4L, "client@example.com", "ООО Ромашка", null, "CLIENT"),
-                "access-token",
-                Instant.parse("2026-04-21T10:30:00Z"),
-                "refresh-token",
-                Instant.parse("2026-05-05T10:00:00Z")
+    void getAllBookingsReturnsDataForAdminUser() throws Exception {
+        PaymentResponse payment = new PaymentResponse(
+                21L,
+                new BigDecimal("2700.00"),
+                "Unpaid",
+                "Онлайн",
+                LocalDateTime.of(2026, 4, 20, 9, 0),
+                LocalDate.of(2026, 4, 21)
         );
-        when(authService.register(any())).thenReturn(response);
+        AdminBookingResponse booking = new AdminBookingResponse(
+                11L,
+                5L,
+                "client@example.com",
+                "ООО Ромашка",
+                3L,
+                "Зал «Орион»",
+                "Деловой центр, корпус A",
+                7L,
+                "Базовый",
+                LocalDateTime.of(2026, 4, 21, 10, 0),
+                LocalDateTime.of(2026, 4, 21, 13, 0),
+                3,
+                new BigDecimal("2700.00"),
+                "Unconfirmed",
+                payment
+        );
+        when(adminService.getAllBookings()).thenReturn(List.of(booking));
 
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "email": "client@example.com",
-                                  "legalName": "ООО Ромашка",
-                                  "phone": "",
-                                  "password": "secret1"
-                                }
-                                """))
+        mockMvc.perform(get("/api/admin/bookings")
+                        .header("Authorization", authorizationHeaderFor(5L, "ADMIN")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.user.userId").value(4))
-                .andExpect(jsonPath("$.user.email").value("client@example.com"))
-                .andExpect(jsonPath("$.user.role").value("CLIENT"))
-                .andExpect(jsonPath("$.accessToken").value("access-token"))
-                .andExpect(jsonPath("$.refreshToken").value("refresh-token"));
+                .andExpect(jsonPath("$[0].bookingId").value(11))
+                .andExpect(jsonPath("$[0].userEmail").value("client@example.com"));
     }
 
     @Test
-    void registerReturnsValidationMessageForInvalidBody() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
+    void updateBookingStatusIsForbiddenForClientUser() throws Exception {
+        mockMvc.perform(patch("/api/admin/bookings/11/status")
+                        .header("Authorization", authorizationHeaderFor(6L, "CLIENT"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "email": "wrong-email",
-                                  "legalName": "",
-                                  "phone": "123",
-                                  "password": "123"
+                                  "status": "CONFIRMED"
                                 }
                                 """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("email")))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Пароль должен содержать")));
+                .andExpect(status().isForbidden());
     }
 
-    @Test
-    void meReturnsUnauthorizedWithoutAuthenticatedSession() throws Exception {
-        mockMvc.perform(get("/api/auth/me"))
-                .andExpect(status().isUnauthorized());
+    private String authorizationHeaderFor(Long userId, String role) {
+        UserEntity user = new UserEntity();
+        user.setUserId(userId);
+        user.setUserEmail("client@example.com");
+        user.setUserLegalName("ООО Ромашка");
+        user.setUserRole(role);
+        return "Bearer " + jwtTokenService.issueSession(user).accessToken();
     }
 }

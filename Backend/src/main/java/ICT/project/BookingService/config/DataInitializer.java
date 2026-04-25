@@ -2,10 +2,14 @@ package ICT.project.BookingService.config;
 
 import ICT.project.BookingService.entity.LocationEntity;
 import ICT.project.BookingService.entity.TariffEntity;
+import ICT.project.BookingService.entity.UserEntity;
 import ICT.project.BookingService.repository.LocationRepository;
 import ICT.project.BookingService.repository.TariffRepository;
+import ICT.project.BookingService.repository.UserRepository;
 import java.math.BigDecimal;
 import java.time.LocalTime;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,39 +17,49 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class DataInitializer {
 
+    private final String adminEmail;
+
+    public DataInitializer(@Value("${app.auth.admin-email:}") String adminEmail) {
+        this.adminEmail = adminEmail == null ? "" : adminEmail.trim().toLowerCase();
+    }
+
     @Bean
-    public CommandLineRunner seedReferenceData(LocationRepository locationRepository, TariffRepository tariffRepository) {
+    public CommandLineRunner seedReferenceData(
+            LocationRepository locationRepository,
+            TariffRepository tariffRepository,
+            UserRepository userRepository
+    ) {
         return args -> {
             if (locationRepository.count() == 0) {
                 locationRepository.save(createLocation(
                         "Конференц-зал",
-                        "Зал «Волга»",
-                        "Самара, ул. Молодогвардейская, 151",
+                        "Зал «Орион»",
+                        "Деловой центр, корпус A",
                         LocalTime.of(8, 0),
                         LocalTime.of(22, 0),
-                        "+7 (846) 200-10-10",
-                        new BigDecimal("53.195878"),
-                        new BigDecimal("50.101783")
+                        "+7 (000) 100-10-10",
+                        null,
+                        null
                 ));
                 locationRepository.save(createLocation(
                         "Рабочее пространство",
-                        "Пространство «Маяк»",
-                        "Самара, Московское шоссе, 4",
+                        "Пространство «Атлас»",
+                        "Деловой центр, корпус B",
                         LocalTime.of(9, 0),
                         LocalTime.of(21, 0),
-                        "+7 (846) 200-20-20",
-                        new BigDecimal("53.204512"),
-                        new BigDecimal("50.179806")
+                        "+7 (000) 100-20-20",
+                        null,
+                        null
                 ));
                 locationRepository.save(createLocation(
                         "Переговорная",
-                        "Комната «Спутник»",
-                        "Самара, ул. Гагарина, 96",
+                        "Комната «Навигатор»",
+                        "Деловой центр, корпус C",
                         LocalTime.of(10, 0),
                         LocalTime.of(20, 0),
-                        "+7 (846) 200-30-30",
-                        new BigDecimal("53.209455"),
-                        new BigDecimal("50.182092")
+                        "+7 (000) 100-30-30",
+                        null,
+                        null
                 ));
             }
 
@@ -62,6 +76,15 @@ public class DataInitializer {
                         tariff.setTariffStatus("Недоступен");
                         tariffRepository.save(tariff);
                     });
+
+            if (adminEmail.isBlank()) {
+                return;
+            }
+
+            Optional.ofNullable(userRepository.findByUserEmailIgnoreCase(adminEmail))
+                    .orElse(Optional.empty())
+                    .map(this::promoteAdmin)
+                    .ifPresent(userRepository::save);
         };
     }
 
@@ -102,5 +125,10 @@ public class DataInitializer {
         return "Рабочий день".equalsIgnoreCase(tariffName)
                 || "Business Day".equalsIgnoreCase(tariffName)
                 || "Business".equalsIgnoreCase(tariffName);
+    }
+
+    private UserEntity promoteAdmin(UserEntity user) {
+        user.setUserRole("ADMIN");
+        return user;
     }
 }

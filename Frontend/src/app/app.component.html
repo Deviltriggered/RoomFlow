@@ -293,6 +293,220 @@
     </article>
   </section>
 
+  @if (isAdmin()) {
+    <section class="admin-layout">
+      <article class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-tag">Администрирование</p>
+            <h3>Все бронирования</h3>
+          </div>
+          @if (adminDataLoading) {
+            <span class="muted">Обновляем список...</span>
+          }
+        </div>
+
+        <div class="admin-filters">
+          <label>
+            <span>Фильтр по дате</span>
+            <input type="date" name="adminFilterDate" [(ngModel)]="adminFilterDate" />
+          </label>
+
+          <label>
+            <span>Фильтр по помещению</span>
+            <select name="adminFilterLocationId" [(ngModel)]="adminFilterLocationId">
+              <option [ngValue]="null">Все помещения</option>
+              @for (location of locations; track trackById($index, location)) {
+                <option [ngValue]="location.locationId">{{ displayLocationName(location.name) }}</option>
+              }
+            </select>
+          </label>
+        </div>
+
+        @if (adminDataLoading) {
+          <p class="empty-state">Получаем все активные и завершённые бронирования.</p>
+        } @else if (adminBookings().length === 0) {
+          <p class="empty-state">По выбранным фильтрам бронирования не найдены.</p>
+        } @else {
+          <div class="timeline">
+            @for (booking of adminBookings(); track booking.bookingId) {
+              <article class="timeline-card admin-booking-card">
+                <div class="timeline-header">
+                  <div>
+                    <h4>{{ displayLocationName(booking.locationName) }}</h4>
+                    <p>{{ displayAddress(booking.locationAddress) }}</p>
+                  </div>
+                  <span class="status-pill" [class]="statusClass(booking.bookingStatus)">{{ displayStatus(booking.bookingStatus) }}</span>
+                </div>
+
+                <div class="timeline-meta">
+                  <span>Клиент: {{ booking.userLegalName }}</span>
+                  <span>Email: {{ booking.userEmail }}</span>
+                  <span>{{ formatDateTime(booking.bookingStart) }} - {{ formatDateTime(booking.bookingEnd) }}</span>
+                  <span>{{ booking.bookingDurationHours }} ч</span>
+                  <span>{{ displayTariffName(booking.tariffName) }}</span>
+                  <span>{{ formatCurrency(booking.bookingPrice) }}</span>
+                </div>
+
+                <div class="linked-payment">
+                  <span>Платёж #{{ booking.payment.paymentId }}</span>
+                  <span class="status-pill" [class]="statusClass(booking.payment.paymentStatus)">{{ displayStatus(booking.payment.paymentStatus) }}</span>
+                  <span>Сумма: {{ formatCurrency(booking.payment.paymentSum) }}</span>
+                </div>
+
+                <div class="admin-booking-actions">
+                  <label class="inline-field">
+                    <span>Новый статус</span>
+                    <select name="status-{{ booking.bookingId }}" [(ngModel)]="booking.selectedStatus">
+                      @for (status of adminBookingStatuses; track status.value) {
+                        <option [ngValue]="status.value">{{ status.label }}</option>
+                      }
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    class="ghost-button"
+                    [disabled]="bookingStatusUpdatingId === booking.bookingId"
+                    (click)="updateAdminBookingStatus(booking)"
+                  >
+                    {{ bookingStatusUpdatingId === booking.bookingId ? 'Сохраняем...' : 'Сменить статус' }}
+                  </button>
+
+                  <button
+                    type="button"
+                    class="danger-button"
+                    [disabled]="bookingDeletingId === booking.bookingId"
+                    (click)="deleteAdminBooking(booking.bookingId)"
+                  >
+                    {{ bookingDeletingId === booking.bookingId ? 'Удаляем...' : 'Удалить бронь' }}
+                  </button>
+                </div>
+              </article>
+            }
+          </div>
+        }
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-tag">Администрирование</p>
+            <h3>Управление помещениями</h3>
+          </div>
+        </div>
+
+        <div class="admin-location-stack">
+          @for (location of locations; track trackById($index, location)) {
+            @if (adminLocationDrafts[location.locationId]; as draft) {
+              <form class="form-grid admin-location-form" (ngSubmit)="saveLocation(location.locationId)">
+                <div class="admin-location-form__title">
+                  <h4>{{ displayLocationName(location.name) }}</h4>
+                  <span class="muted">ID {{ location.locationId }}</span>
+                </div>
+
+                <label>
+                  <span>Тип помещения</span>
+                  <input type="text" name="locationType-{{ location.locationId }}" [(ngModel)]="draft.type" required />
+                </label>
+
+                <label>
+                  <span>Название</span>
+                  <input type="text" name="locationName-{{ location.locationId }}" [(ngModel)]="draft.name" required />
+                </label>
+
+                <label>
+                  <span>Адрес</span>
+                  <input type="text" name="locationAddress-{{ location.locationId }}" [(ngModel)]="draft.address" required />
+                </label>
+
+                <label>
+                  <span>Открытие</span>
+                  <input type="time" name="locationOpening-{{ location.locationId }}" [(ngModel)]="draft.opening" required />
+                </label>
+
+                <label>
+                  <span>Закрытие</span>
+                  <input type="time" name="locationClosing-{{ location.locationId }}" [(ngModel)]="draft.closing" required />
+                </label>
+
+                <label>
+                  <span>Телефон</span>
+                  <input type="tel" name="locationPhone-{{ location.locationId }}" [(ngModel)]="draft.phone" />
+                </label>
+
+                <label>
+                  <span>Широта</span>
+                  <input type="text" name="locationLatitude-{{ location.locationId }}" [(ngModel)]="draft.latitude" />
+                </label>
+
+                <label>
+                  <span>Долгота</span>
+                  <input type="text" name="locationLongitude-{{ location.locationId }}" [(ngModel)]="draft.longitude" />
+                </label>
+
+                <button type="submit" class="primary-button" [disabled]="locationSavingId === location.locationId">
+                  {{ locationSavingId === location.locationId ? 'Сохраняем...' : 'Сохранить помещение' }}
+                </button>
+              </form>
+            }
+          }
+
+          <form class="form-grid admin-location-form admin-location-form--new" (ngSubmit)="createLocation()">
+            <div class="admin-location-form__title">
+              <h4>Новое помещение</h4>
+              <span class="muted">Будет сразу доступно в каталоге</span>
+            </div>
+
+            <label>
+              <span>Тип помещения</span>
+              <input type="text" name="newLocationType" [(ngModel)]="newLocationForm.type" required />
+            </label>
+
+            <label>
+              <span>Название</span>
+              <input type="text" name="newLocationName" [(ngModel)]="newLocationForm.name" required />
+            </label>
+
+            <label>
+              <span>Адрес</span>
+              <input type="text" name="newLocationAddress" [(ngModel)]="newLocationForm.address" required />
+            </label>
+
+            <label>
+              <span>Открытие</span>
+              <input type="time" name="newLocationOpening" [(ngModel)]="newLocationForm.opening" required />
+            </label>
+
+            <label>
+              <span>Закрытие</span>
+              <input type="time" name="newLocationClosing" [(ngModel)]="newLocationForm.closing" required />
+            </label>
+
+            <label>
+              <span>Телефон</span>
+              <input type="tel" name="newLocationPhone" [(ngModel)]="newLocationForm.phone" />
+            </label>
+
+            <label>
+              <span>Широта</span>
+              <input type="text" name="newLocationLatitude" [(ngModel)]="newLocationForm.latitude" />
+            </label>
+
+            <label>
+              <span>Долгота</span>
+              <input type="text" name="newLocationLongitude" [(ngModel)]="newLocationForm.longitude" />
+            </label>
+
+            <button type="submit" class="primary-button" [disabled]="locationSavingId === 'new'">
+              {{ locationSavingId === 'new' ? 'Создаём...' : 'Добавить помещение' }}
+            </button>
+          </form>
+        </div>
+      </article>
+    </section>
+  }
+
   <section class="panel">
     <div class="panel-heading">
       <div>

@@ -3,6 +3,9 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Component, ElementRef, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { forkJoin } from 'rxjs';
+import { resolveApiBase } from './api-base';
+import { AuthSessionResponse, AuthResponse } from './auth.models';
+import { AuthTokenService } from './auth-token.service';
 
 @Component({
   selector: 'app-root',
@@ -13,7 +16,8 @@ import { forkJoin } from 'rxjs';
 })
 export class AppComponent implements OnInit {
   private readonly http = inject(HttpClient);
-  private readonly apiBase = this.resolveApiBase();
+  private readonly authTokens = inject(AuthTokenService);
+  private readonly apiBase = resolveApiBase();
 
   @ViewChild('errorBanner') errorBanner?: ElementRef<HTMLDivElement>;
 
@@ -28,12 +32,20 @@ export class AppComponent implements OnInit {
   bookingsLoading = false;
   bookingSubmitting = false;
   availabilityLoading = false;
+  adminDataLoading = false;
+  bookingStatusUpdatingId: number | null = null;
+  bookingDeletingId: number | null = null;
+  locationSavingId: number | 'new' | null = null;
 
   locations: LocationItem[] = [];
   tariffs: TariffItem[] = [];
   bookings: BookingItem[] = [];
   payments: PaymentItem[] = [];
   occupiedHours: number[] = [];
+  allBookings: AdminBookingItem[] = [];
+  adminLocationDrafts: Record<number, AdminLocationForm> = {};
+  adminFilterDate = '';
+  adminFilterLocationId: number | null = null;
 
   registerForm = {
     email: '',
@@ -55,6 +67,14 @@ export class AppComponent implements OnInit {
     endHour: this.toHourLabel(this.addHours(this.nextFullHour(), 2))
   };
 
+  newLocationForm = this.emptyLocationForm();
+  readonly adminBookingStatuses: AdminBookingStatusOption[] = [
+    { value: 'UNCONFIRMED', label: 'Не подтверждено' },
+    { value: 'CONFIRMED', label: 'Подтверждено' },
+    { value: 'IN_PROGRESS', label: 'Идёт аренда' },
+    { value: 'FINISHED', label: 'Завершено' }
+  ];
+
   ngOnInit(): void {
     this.loadCatalog();
     this.restoreSession();
@@ -68,12 +88,14 @@ export class AppComponent implements OnInit {
   register(): void {
     this.clearMessages();
     this.authLoading = true;
-    this.http.post<AuthResponse>(`${this.apiBase}/auth/register`, this.registerForm, { withCredentials: true }).subscribe({
-      next: (user) => {
-        this.user = user;
+    this.http.post<AuthSessionResponse>(`${this.apiBase}/auth/register`, this.registerForm).subscribe({
+      next: (session) => {
+        this.authTokens.storeSession(session);
+        this.user = session.user;
         this.authLoading = false;
         this.pageNotice = 'Профиль создан. Теперь можно выбрать помещение и отправить заявку.';
         this.refreshPrivateData();
+        this.refreshAdminData();
       },
       error: (error) => {
         this.authLoading = false;
@@ -85,12 +107,14 @@ export class AppComponent implements OnInit {
   login(): void {
     this.clearMessages();
     this.authLoading = true;
-    this.http.post<AuthResponse>(`${this.apiBase}/auth/login`, this.loginForm, { withCredentials: true }).subscribe({
-      next: (user) => {
-        this.user = user;
+    this.http.post<AuthSessionResponse>(`${this.apiBase}/auth/login`, this.loginForm).subscribe({
+      next: (session) => {
+        this.authTokens.storeSession(session);
+        this.user = session.user;
         this.authLoading = false;
-        this.pageNotice = `С возвращением, ${user.legalName}.`;
+        this.pageNotice = `С возвращением, ${session.user.legalName}.`;
         this.refreshPrivateData();
+        this.refreshAdminData();
       },
       error: (error) => {
         this.authLoading = false;
@@ -101,17 +125,12 @@ export class AppComponent implements OnInit {
 
   logout(): void {
     this.clearMessages();
-    this.http.post<void>(`${this.apiBase}/auth/logout`, {}, { withCredentials: true }).subscribe({
-      next: () => {
-        this.user = null;
-        this.bookings = [];
-        this.payments = [];
-        this.pageNotice = 'Сессия завершена.';
-      },
-      error: (error) => {
-        this.setPageError(this.extractError(error));
-      }
-    });
+    this.authTokens.clearSession();
+    this.user = null;
+    this.bookings = [];
+    this.payments = [];
+    this.clearAdminState();
+    this.pageNotice = 'Сессия завершена.';
   }
 
   chooseLocation(locationId: number): void {
@@ -161,7 +180,7 @@ export class AppComponent implements OnInit {
       tariffId: this.bookingForm.tariffId,
       bookingStart: `${this.bookingForm.bookingDate}T${this.bookingForm.startHour}`,
       bookingEnd: `${this.bookingForm.bookingDate}T${this.bookingForm.endHour}`
-    }, { withCredentials: true }).subscribe({
+    }).subscribe({
       next: (booking) => {
         this.bookingSubmitting = false;
         this.pageNotice = `Заявка #${booking.bookingId} создана, платёж #${booking.payment.paymentId} на ${this.formatCurrency(booking.payment.paymentSum)} сформирован автоматически.`;
@@ -222,6 +241,10 @@ export class AppComponent implements OnInit {
 
   formatCurrency(value: number): string {
     return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} ₽`;
+  }
+
+  isAdmin(): boolean {
+    return this.user?.role.toUpperCase() === 'ADMIN';
   }
 
   formatDateTime(value: string): string {
@@ -289,7 +312,112 @@ export class AppComponent implements OnInit {
   }
 
   displayRole(role: string): string {
+    if (role.toUpperCase() === 'ADMIN') {
+      return 'Администратор';
+    }
     return role.toUpperCase() === 'CLIENT' ? 'Клиент' : role;
+  }
+
+  adminBookings(): AdminBookingItem[] {
+    return this.allBookings.filter((booking) => {
+      if (this.adminFilterLocationId && booking.locationId !== this.adminFilterLocationId) {
+        return false;
+      }
+      if (this.adminFilterDate && booking.bookingStart.slice(0, 10) !== this.adminFilterDate) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  adminLocationDraft(locationId: number): AdminLocationForm {
+    if (!this.adminLocationDrafts[locationId]) {
+      const location = this.locations.find((item) => item.locationId === locationId);
+      this.adminLocationDrafts[locationId] = this.toLocationForm(location);
+    }
+    return this.adminLocationDrafts[locationId];
+  }
+
+  updateAdminBookingStatus(booking: AdminBookingItem): void {
+    this.clearMessages();
+    this.bookingStatusUpdatingId = booking.bookingId;
+    this.http.patch<AdminBookingApiItem>(
+      `${this.apiBase}/admin/bookings/${booking.bookingId}/status`,
+      { status: booking.selectedStatus },
+    ).subscribe({
+      next: (updated) => {
+        const nextBooking = this.toAdminBookingItem(updated);
+        this.allBookings = this.allBookings.map((item) => item.bookingId === booking.bookingId ? nextBooking : item);
+        this.bookingStatusUpdatingId = null;
+        this.pageNotice = `Статус бронирования #${booking.bookingId} обновлён.`;
+        this.refreshPrivateData();
+      },
+      error: (error) => {
+        this.bookingStatusUpdatingId = null;
+        this.setPageError(this.extractError(error));
+      }
+    });
+  }
+
+  deleteAdminBooking(bookingId: number): void {
+    this.clearMessages();
+    this.bookingDeletingId = bookingId;
+    this.http.delete<void>(`${this.apiBase}/admin/bookings/${bookingId}`).subscribe({
+      next: () => {
+        this.allBookings = this.allBookings.filter((booking) => booking.bookingId !== bookingId);
+        this.bookingDeletingId = null;
+        this.pageNotice = `Бронирование #${bookingId} удалено.`;
+        this.refreshPrivateData();
+        this.loadAvailability();
+      },
+      error: (error) => {
+        this.bookingDeletingId = null;
+        this.setPageError(this.extractError(error));
+      }
+    });
+  }
+
+  saveLocation(locationId: number): void {
+    const payload = this.buildLocationPayload(this.adminLocationDraft(locationId));
+    if (!payload) {
+      return;
+    }
+
+    this.clearMessages();
+    this.locationSavingId = locationId;
+    this.http.put<LocationItem>(`${this.apiBase}/admin/locations/${locationId}`, payload).subscribe({
+      next: () => {
+        this.locationSavingId = null;
+        this.pageNotice = 'Информация о помещении обновлена.';
+        this.loadCatalog();
+      },
+      error: (error) => {
+        this.locationSavingId = null;
+        this.setPageError(this.extractError(error));
+      }
+    });
+  }
+
+  createLocation(): void {
+    const payload = this.buildLocationPayload(this.newLocationForm);
+    if (!payload) {
+      return;
+    }
+
+    this.clearMessages();
+    this.locationSavingId = 'new';
+    this.http.post<LocationItem>(`${this.apiBase}/admin/locations`, payload).subscribe({
+      next: () => {
+        this.locationSavingId = null;
+        this.newLocationForm = this.emptyLocationForm();
+        this.pageNotice = 'Новое помещение добавлено.';
+        this.loadCatalog();
+      },
+      error: (error) => {
+        this.locationSavingId = null;
+        this.setPageError(this.extractError(error));
+      }
+    });
   }
 
   displayLocationType(type: string): string {
@@ -309,9 +437,9 @@ export class AppComponent implements OnInit {
   displayLocationName(name: string): string {
     const normalized = name.trim().toLowerCase();
     const translations: Record<string, string> = {
-      volga: 'Зал «Волга»',
-      'aero space loft': 'Пространство «Маяк»',
-      'mercury room': 'Комната «Спутник»'
+      orion: 'Зал «Орион»',
+      atlas: 'Пространство «Атлас»',
+      navigator: 'Комната «Навигатор»'
     };
     return translations[normalized] ?? name;
   }
@@ -319,9 +447,9 @@ export class AppComponent implements OnInit {
   displayAddress(address: string): string {
     const normalized = address.trim().toLowerCase();
     const translations: Record<string, string> = {
-      'samara, molodogvardeyskaya 151': 'Самара, ул. Молодогвардейская, 151',
-      'samara, moskovskoye shosse 4': 'Самара, Московское шоссе, 4',
-      'samara, gagarina 96': 'Самара, ул. Гагарина, 96'
+      'business center, building a': 'Деловой центр, корпус A',
+      'business center, building b': 'Деловой центр, корпус B',
+      'business center, building c': 'Деловой центр, корпус C'
     };
     return translations[normalized] ?? address;
   }
@@ -396,12 +524,16 @@ export class AppComponent implements OnInit {
   private loadCatalog(): void {
     this.catalogLoading = true;
     forkJoin({
-      locations: this.http.get<LocationItem[]>(`${this.apiBase}/locations`, { withCredentials: true }),
-      tariffs: this.http.get<TariffItem[]>(`${this.apiBase}/tariffs`, { withCredentials: true })
+      locations: this.http.get<LocationItem[]>(`${this.apiBase}/locations`),
+      tariffs: this.http.get<TariffItem[]>(`${this.apiBase}/tariffs`)
     }).subscribe({
       next: ({ locations, tariffs }) => {
         this.locations = locations;
         this.tariffs = tariffs;
+        this.initializeAdminLocationDrafts();
+        if (this.adminFilterLocationId && !locations.some((location) => location.locationId === this.adminFilterLocationId)) {
+          this.adminFilterLocationId = null;
+        }
         this.catalogLoading = false;
         if (!this.bookingForm.locationId && locations.length > 0) {
           this.bookingForm.locationId = locations[0].locationId;
@@ -417,13 +549,24 @@ export class AppComponent implements OnInit {
   }
 
   private restoreSession(): void {
-    this.http.get<AuthResponse>(`${this.apiBase}/auth/me`, { withCredentials: true }).subscribe({
+    if (!this.authTokens.hasSession()) {
+      this.user = null;
+      this.clearAdminState();
+      return;
+    }
+
+    this.http.get<AuthResponse>(`${this.apiBase}/auth/me`).subscribe({
       next: (user) => {
         this.user = user;
         this.refreshPrivateData();
+        this.refreshAdminData();
       },
       error: () => {
+        this.authTokens.clearSession();
         this.user = null;
+        this.bookings = [];
+        this.payments = [];
+        this.clearAdminState();
       }
     });
   }
@@ -435,8 +578,8 @@ export class AppComponent implements OnInit {
 
     this.bookingsLoading = true;
     forkJoin({
-      bookings: this.http.get<BookingItem[]>(`${this.apiBase}/bookings/my`, { withCredentials: true }),
-      payments: this.http.get<PaymentItem[]>(`${this.apiBase}/payments/my`, { withCredentials: true })
+      bookings: this.http.get<BookingItem[]>(`${this.apiBase}/bookings/my`),
+      payments: this.http.get<PaymentItem[]>(`${this.apiBase}/payments/my`)
     }).subscribe({
       next: ({ bookings, payments }) => {
         this.bookings = bookings;
@@ -455,6 +598,38 @@ export class AppComponent implements OnInit {
     this.pageNotice = '';
   }
 
+  private clearAdminState(): void {
+    this.allBookings = [];
+    this.adminLocationDrafts = {};
+    this.adminFilterDate = '';
+    this.adminFilterLocationId = null;
+    this.newLocationForm = this.emptyLocationForm();
+    this.adminDataLoading = false;
+    this.bookingStatusUpdatingId = null;
+    this.bookingDeletingId = null;
+    this.locationSavingId = null;
+  }
+
+  private refreshAdminData(): void {
+    if (!this.isAdmin()) {
+      this.clearAdminState();
+      return;
+    }
+
+    this.initializeAdminLocationDrafts();
+    this.adminDataLoading = true;
+    this.http.get<AdminBookingApiItem[]>(`${this.apiBase}/admin/bookings`).subscribe({
+      next: (bookings) => {
+        this.allBookings = bookings.map((booking) => this.toAdminBookingItem(booking));
+        this.adminDataLoading = false;
+      },
+      error: (error) => {
+        this.adminDataLoading = false;
+        this.setPageError(this.extractError(error));
+      }
+    });
+  }
+
   private loadAvailability(): void {
     if (!this.bookingForm.locationId || !this.bookingForm.bookingDate) {
       this.occupiedHours = [];
@@ -466,8 +641,7 @@ export class AppComponent implements OnInit {
     this.http.get<LocationAvailabilityResponse>(
       `${this.apiBase}/locations/${this.bookingForm.locationId}/availability`,
       {
-        params: { date: this.bookingForm.bookingDate },
-        withCredentials: true
+        params: { date: this.bookingForm.bookingDate }
       }
     ).subscribe({
       next: (availability) => {
@@ -616,26 +790,99 @@ export class AppComponent implements OnInit {
     this.bookingForm.tariffId = firstAvailableTariff?.tariffId ?? null;
   }
 
-  private resolveApiBase(): string {
-    const location = globalThis.location;
-    if (!location) {
-      return '/api';
-    }
-
-    if (location.port === '4200' || location.port === '4201') {
-      return 'http://localhost:8080/api';
-    }
-
-    return `${location.origin}/api`;
+  private initializeAdminLocationDrafts(): void {
+    this.adminLocationDrafts = this.locations.reduce<Record<number, AdminLocationForm>>((drafts, location) => {
+      drafts[location.locationId] = this.toLocationForm(location);
+      return drafts;
+    }, {});
   }
-}
 
-interface AuthResponse {
-  userId: number;
-  email: string;
-  legalName: string;
-  phone: string | null;
-  role: string;
+  private toAdminBookingItem(booking: AdminBookingApiItem): AdminBookingItem {
+    return {
+      ...booking,
+      selectedStatus: this.toBookingStatusCode(booking.bookingStatus)
+    };
+  }
+
+  private toBookingStatusCode(status: string): string {
+    const normalized = status.trim().toLowerCase();
+    if (normalized === 'confirmed') {
+      return 'CONFIRMED';
+    }
+    if (normalized === 'in progress') {
+      return 'IN_PROGRESS';
+    }
+    if (normalized === 'finished') {
+      return 'FINISHED';
+    }
+    return 'UNCONFIRMED';
+  }
+
+  private emptyLocationForm(): AdminLocationForm {
+    return {
+      type: '',
+      name: '',
+      address: '',
+      opening: '08:00',
+      closing: '22:00',
+      phone: '',
+      latitude: '',
+      longitude: ''
+    };
+  }
+
+  private toLocationForm(location?: LocationItem): AdminLocationForm {
+    return {
+      type: location?.type ?? '',
+      name: location?.name ?? '',
+      address: location?.address ?? '',
+      opening: this.normalizeTimeValue(location?.opening) || '08:00',
+      closing: this.normalizeTimeValue(location?.closing) || '22:00',
+      phone: location?.phone ?? '',
+      latitude: location?.latitude == null ? '' : String(location.latitude),
+      longitude: location?.longitude == null ? '' : String(location.longitude)
+    };
+  }
+
+  private normalizeTimeValue(value?: string): string {
+    if (!value) {
+      return '';
+    }
+    return value.slice(0, 5);
+  }
+
+  private buildLocationPayload(form: AdminLocationForm): AdminLocationPayload | null {
+    const latitude = this.parseCoordinate(form.latitude, 'Широта');
+    const longitude = this.parseCoordinate(form.longitude, 'Долгота');
+    if (latitude === undefined || longitude === undefined) {
+      return null;
+    }
+
+    return {
+      type: form.type,
+      name: form.name,
+      address: form.address,
+      opening: form.opening,
+      closing: form.closing,
+      phone: form.phone,
+      latitude,
+      longitude
+    };
+  }
+
+  private parseCoordinate(value: string, label: string): number | null | undefined {
+    const normalized = value.trim().replace(',', '.');
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      this.setPageError(`${label} должна быть числом.`);
+      return undefined;
+    }
+    return parsed;
+  }
 }
 
 interface LocationItem {
@@ -699,4 +946,41 @@ interface LocationAvailabilityResponse {
   locationId: number;
   date: string;
   occupiedHours: number[];
+}
+
+interface AdminBookingApiItem extends BookingItem {
+  userId: number;
+  userEmail: string;
+  userLegalName: string;
+}
+
+interface AdminBookingItem extends AdminBookingApiItem {
+  selectedStatus: string;
+}
+
+interface AdminBookingStatusOption {
+  value: string;
+  label: string;
+}
+
+interface AdminLocationForm {
+  type: string;
+  name: string;
+  address: string;
+  opening: string;
+  closing: string;
+  phone: string;
+  latitude: string;
+  longitude: string;
+}
+
+interface AdminLocationPayload {
+  type: string;
+  name: string;
+  address: string;
+  opening: string;
+  closing: string;
+  phone: string;
+  latitude: number | null;
+  longitude: number | null;
 }

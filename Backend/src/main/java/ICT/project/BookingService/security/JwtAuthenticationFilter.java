@@ -1,7 +1,6 @@
 package ICT.project.BookingService.security;
 
-import ICT.project.BookingService.entity.UserEntity;
-import ICT.project.BookingService.repository.UserRepository;
+import ICT.project.BookingService.support.ApiException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,14 +14,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
-public class SessionAuthenticationFilter extends OncePerRequestFilter {
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    public static final String AUTH_USER_ID = "AUTH_USER_ID";
+    private final JwtTokenService jwtTokenService;
 
-    private final UserRepository userRepository;
-
-    public SessionAuthenticationFilter(UserRepository userRepository) {
-        this.userRepository = userRepository;
+    public JwtAuthenticationFilter(JwtTokenService jwtTokenService) {
+        this.jwtTokenService = jwtTokenService;
     }
 
     @Override
@@ -31,26 +28,27 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
-        if (SecurityContextHolder.getContext().getAuthentication() == null && request.getSession(false) != null) {
-            Object rawUserId = request.getSession(false).getAttribute(AUTH_USER_ID);
-            if (rawUserId instanceof Long userId) {
-                userRepository.findById(userId).ifPresent(this::authenticate);
+        String authorizationHeader = request.getHeader("Authorization");
+        if (authorizationHeader != null
+                && authorizationHeader.startsWith("Bearer ")
+                && SecurityContextHolder.getContext().getAuthentication() == null) {
+            String token = authorizationHeader.substring(7).trim();
+            if (!token.isEmpty()) {
+                try {
+                    AuthenticatedUser user = jwtTokenService.parseAccessToken(token);
+                    authenticate(user);
+                } catch (ApiException ignored) {
+                    SecurityContextHolder.clearContext();
+                }
             }
         }
         filterChain.doFilter(request, response);
     }
 
-    private void authenticate(UserEntity user) {
-        String role = user.getUserRole() == null ? "CLIENT" : user.getUserRole().toUpperCase();
-        AuthenticatedUser principal = new AuthenticatedUser(
-                user.getUserId(),
-                user.getUserEmail(),
-                user.getUserLegalName(),
-                user.getUserPhone(),
-                user.getUserRole()
-        );
+    private void authenticate(AuthenticatedUser user) {
+        String role = user.role() == null ? "CLIENT" : user.role().toUpperCase();
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                principal,
+                user,
                 null,
                 List.of(new SimpleGrantedAuthority("ROLE_" + role))
         );
